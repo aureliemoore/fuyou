@@ -1,4 +1,271 @@
-注：以下报文中的mchnt_order_no, refund_order_no必须全局永远唯一(不区分商户、日期)。
+术语及定义
+交易金额: 金额以分为单位，不带小数点。
+
+主扫：用户主动扫付款二维码，也叫扫码支付，动态二维码支付。
+
+被扫：商家扫用户，也叫条码支付。
+
+固码支付：台卡、桌贴。使用公众号、服务窗统一下单。
+
+刷卡支付:(支付宝称当面付，被扫)：用户打开微信/支付宝，受理端扫码微信/支付宝条码/二维码完成资金划扣的支付方式。
+
+公众号支付：用户进入微信公众号通过 JSAPI 完成资金划扣的支付方式。
+
+扫码支付(主扫)：用户进入微信/支付宝启用“扫一扫”扫描商户二维码完成资金划扣的支付方式。
+
+APP支付：APP集成微信/支付宝SDK，用户点击跳转到微信/支付宝客户端后完成资金划扣的支付方式。
+
+接口说明
+1.被扫模式(商户扫用户微信/支付宝支付二维码):调用<条码支付>接口
+
+2.台卡模式(用户使用微信/支付宝扫商户二维码):支付宝支付调用 3.3 接口(trade_type ==FWC)，微信支付调用 3.3 接口(trade_type==JSAPI)
+
+3.下单成功之后请轮询调用订单查询接口查询订单状态,订单可能处于正在支付或取消状态,请轮询订单查询接口根据订单的状态执行相应的操作
+
+4.订单状态请以查询为主，回调为辅
+
+5.回调成功，请返回数字 1 说明收到回调，不然回调会继续发起，回调间隔时间30S，共回调5次
+
+6.退款只有当商户账户有资金才能退款
+
+7.提现交易的步骤为:查询可提现资金信息->查询提现手续费->发起提现
+
+8.新开通提现和退货的商户,15 分钟后才能进行交易，不然会报无效商户
+
+9.余额查询接口显示余额请使用账面余额字段，账面余额为已结算金额和未结算金额之和
+
+10.订单查询可查询3天内的订单，超过3天的交易记录使用《历史查询接口v1.14.docx》文档中的历史查询接口查询。
+
+11.使用公众号支付请注意以下几点:
+
+入网，商户名称必须跟公众号主体名称一致
+进去 https://mp.weixin.qq.com/ 设置相关开发参数 AppSecret，获取AppID
+关于如何获取 openid,建议采取静默模式https://pay.weixin.qq.com/wiki/doc/api/jsapi.php?chapter=4_4
+关于微信版本号获取，5.0 以上才支持微信支付https://pay.weixin.qq.com/wiki/doc/api/jsapi.php?chapter=7_5
+在微信浏览器内打开H5调起支付APIhttps://pay.weixin.qq.com/wiki/doc/api/jsapi.php?chapter=7_7&index=6
+12.支付宝交易，如何获取 buyer_id（即 user_id）: https://doc.open.alipay.com/docs/doc.htm?spm=a219a.7629140.0.0.cPv%201DX&treeId=193&articleId=105193&docType=1#s10
+
+13.银联商户出资，查询、回调的订单金额与原交易金额会不一致，此时返回的是实际清算金额
+
+14.服务窗如何调起支付：https://docs.open.alipay.com/common/105591 使用接口返回的reserved_transaction_id调起支付即可
+
+15.接口 3.3 公众号/服务窗统一下单 ，交易类型为小程序和公众号时，填写sub_appid 和 sub_openid。
+
+16.微信 APP 下单使用"3.3 公众号/服务窗统一下单"接口，app支付时，prepayid字段取响应报文中的session_id 字段的值。
+
+17.商户订单号UNIONPAY银联仅支持数字订单单号。
+
+18.微信JSAPI，公众号支付完成后跳转说明：
+
+关于支付完成后跳转页面升级为“点金计划”官方页面的详细接入指引：
+
+点金计划产品介绍：https://pay.weixin.qq.com/wiki/doc/apiv3/wxpay/goldplan/chapter1_1.shtml
+
+配置方式有两种：
+
+自有渠道号合作方：可登录服务商平台——>服务商功能——>点金计划——>报名及配置。链接如下：https://pay.weixin.qq.com/index.php/xphp/cgoldplan_mgr/activity_index
+
+使用富友渠道号：找对应运营同事开通点金计划和配置支付完成后所需要跳转的商家小票链接
+
+支付完成后跳转页面需要对接微信官方js才可展示或跳转自定义页面，文档可参考：https://gtimg.wechatpay.cn/pay/download/goldplan/goldplan_product_description_v2.1.pdf 中3.4 商家小票开发指引
+
+19. 云闪付的主被扫交易设置的订单关闭时间不生效。
+通讯方式
+通信采用HTTP协议,POST表单发送/接收xml格式的报文,post参数名为req。参数值为以下接口中各个字段组成的xml报文,xml在发送之前先进行一次URLencode.接收来自富友的返回报文时也需先做一个URLdecode
+报文中有中文需要进行两次encode操作
+
+java参考代码：
+
+//解码
+URLDecoder.decode(reqXml,"GBK");
+//编码
+URLEncoder.encode(rspXml,"GBK");
+签名
+采用1024bit长度密钥的RSA签名方式,加密算法使用MD5WithRSA，计算签名和验签的时候的需要使用GBK编码。
+
+计算方法
+将接口文档中的每-个字段( sign及reserved开头字段除外 ),，以字典顺序排序之后,按照key1=value1&key2=value2.....的顺序,进行拼接。
+对得到的字符串进行RSA签名/验签
+注：sign及reserved开头字段除外的其他非必填字段也需要参与验签。我司会根据后期业务需求，新增reserved开头字段,请提前做好兼容(简而言之，我们会新增reserved开头字段的字段，这些字段都不参与验签)。
+
+签名计算工具
+点击此处跳转
+
+签名实例
+参数：
+
+<?xml version="1.0" encoding="GBK" standalone="yes"?>
+<xml>
+    <reserved_fy_term_sn></reserved_fy_term_sn>
+    <reserved_device_info></reserved_device_info>
+    <term_id>12345678</term_id>
+    <random_str>d0194c1024f180065d2434fa8b6a2f82</random_str>
+    <reserved_limit_pay></reserved_limit_pay>
+    <reserved_sub_appid></reserved_sub_appid>
+    <ins_cd>08A9999999</ins_cd>
+    <reserved_fy_term_type></reserved_fy_term_type>
+    <version>1</version>
+    <addn_inf></addn_inf>
+    <mchnt_cd>0002900F0370542</mchnt_cd>
+    <reserved_expire_minute></reserved_expire_minute>
+    <term_ip>127.0.0.1</term_ip>
+    <notify_url>https://mail.qq.com/cgi-bin/frame_html?sid=pEYG5nBgQiNVqANe&amp;r=4a6c47ad7d279a80630dec073cda96e2
+    </notify_url>
+    <order_amt>1</order_amt>
+    <goods_des>卡盟测试</goods_des>
+    <reserved_hb_fq_seller_percent></reserved_hb_fq_seller_percent>
+    <curr_type></curr_type>
+    <txn_begin_ts>20201201151802</txn_begin_ts>
+    <sign>
+        DXNr4zU78EF7R/dknRsVYNWwJ29M6l4YMZrOjqZbNYW9m90yq/n76lO4sS4r8rls0cEz6aRppfLaMkcoyyEqOCRyRnZoCdbi/EW8toU8UhIm+J0J+I9lFe+IqD6fOQ73c6iNzQ0Bvt9nTYvU2WvbKH4xIDntA0Sw7prNGJiq6iI=
+    </sign>
+    <goods_tag></goods_tag>
+    <goods_detail>asasda</goods_detail>
+    <reserved_fy_term_id></reserved_fy_term_id>
+    <reserved_hb_fq_num></reserved_hb_fq_num>
+    <mchnt_order_no>202012011518020724446</mchnt_order_no>
+    <order_type>WECHAT</order_type>
+</xml>
+经过字典序排序后的字符串 (签名原文)string 为：
+
+addn_inf=&curr_type=&goods_des=卡盟测试&goods_detail=asasda&goods_tag=&ins_cd=08A9999999&mchnt_cd=0002900F0370542&mchnt_order_no=202012011518020724446&notify_url=https://mail.qq.com/cgi-bin/frame_html?sid=pEYG5nBgQiNVqANe&r=4a6c47ad7d279a80630dec073cda96e2&order_amt=1&order_type=WECHAT&random_str=d0194c1024f180065d2434fa8b6a2f82&term_id=12345678&term_ip=127.0.0.1&txn_begin_ts=20201201151802&version=1
+RSA密钥对生成工具
+RSA密钥对生成工具，可以快速生成非对称加密的RSA密钥对（RSA Key pair），提供生成长度为1024bit、2048bit的pkcs8格式的密钥对。
+
+点击此处跳转
+
+测试环境参数 (此为测试环境参数，生产参数验收之后即可得到，生产环境建议使用网易邮箱申请密钥，以免收不到)
+测试商户号：0002900F0370542
+测试机构号：08A9999999
+测试Appid：wxfa089da95020ba1a用于微信，若是支付宝，需要去注册支付宝服务商，然后申请生活号
+富友测试密钥用于请求报文签名原文加密，富友公钥用于响应报文签名原文解密
+测试地址见接口文档
+
+富友测试私钥--用于请求报文签名原文加密
+
+PRIVATE KEY : 
+MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBAJgAzD8fEvBHQTyxUEeK963mjziM
+WG7nxpi+pDMdtWiakc6xVhhbaipLaHo4wVI92A2wr3ptGQ1/YsASEHm3m2wGOpT2vrb2Ln/S7lz1
+ShjTKaT8U6rKgCdpQNHUuLhBQlpJer2mcYEzG/nGzcyalOCgXC/6CySiJCWJmPyR45bJAgMBAAEC
+gYBHFfBvAKBBwIEQ2jeaDbKBIFcQcgoVa81jt5xgz178WXUg/awu3emLeBKXPh2i0YtN87hM/+J8
+fnt3KbuMwMItCsTD72XFXLM4FgzJ4555CUCXBf5/tcKpS2xT8qV8QDr8oLKA18sQxWp8BMPrNp0e
+pmwun/gwgxoyQrJUB5YgZQJBAOiVXHiTnc3KwvIkdOEPmlfePFnkD4zzcv2UwTlHWgCyM/L8SCAF
+clXmSiJfKSZZS7o0kIeJJ6xe3Mf4/HSlhdMCQQCnTow+TnlEhDTPtWa+TUgzOys83Q/VLikqKmDz
+kWJ7I12+WX6AbxxEHLD+THn0JGrlvzTEIZyCe0sjQy4LzQNzAkEAr2SjfVJkuGJlrNENSwPHMugm
+vusbRwH3/38ET7udBdVdE6poga1Z0al+0njMwVypnNwy+eLWhkhrWmpLh3OjfQJAI3BV8JS6xzKh
+5SVtn/3Kv19XJ0tEIUnn2lCjvLQdAixZnQpj61ydxie1rggRBQ/5vLSlvq3H8zOelNeUF1fT1QJA
+DNo+tkHVXLY9H2kdWFoYTvuLexHAgrsnHxONOlSA5hcVLd1B3p9utOt3QeDf6x2i1lqhTH2w8gzj
+vsnx13tWqg==
+富友测试公钥--用于响应报文签名原文解密
+
+PUBLIC KEY : 
+MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCBv9K+jiuHqXIehX81oyNSD2RfVn+KTPb7NRT5HDPFE35CjZJd7Fu40r0U2Cp7Eyhayv/mRS6ZqvBT/8tQqwpUExTQQBbdZjfk+efb9bF9a+uCnAg0RsuqxeJ2r/rRTsORzVLJy+4GKcv06/p6CcBc5BI1gqSKmyyNBlgfkxLYewIDAQAB
+测试注意(重要重要！！！必看！！！！！)
+注意：测试环境提供的银行间连生产测试账号是生产环境用来进行支付业务体验的账号，交易中产生的一切信息均为生产环境数据。用户支付需使用正式版微信、支付宝登陆用户的支付账号，使用用户的账号余额或绑定的银行卡等支付渠道进行支付。由于测试账号业务特点，不会产生清算资金划拨。所以使用测试账号时请务必使用小于1元的小金额，并请务必在支付当日完成退款。否则因隔日退款失败造成的测试资金损失由测试机构承担，并视为放弃资金。由于该账号为测试体验账号，所以禁止将该账号用于生产业务用途，禁止在商户真实业务中使用。对于将测试账号误用在商户真实业务造成的商户、用户等资金损失，由测试机构承担。 使用该测试账号则视为同意上述使用协议。
+
+goods_detail说明字段
+支付宝
+
+[{
+    "goods_id":"apple-01",//商品编号 必填
+    "alipay_goods_id":"20010001",//支付宝定义的统一商品编号 非必填
+    "goods_name":"单品",//商品名称 必填
+    "quantity":"1",//商品数量 必填
+    "price":"0.21",//商品单价，单位为元 必填
+    "goods_category":"",//商品类目 非必填
+    "categories_tree":"124868003|126232002|126252004",//商品类目树，从商品类目根节点到叶子节点的类目 id 组成，类目 id 值使用|分割
+    "body":"",//商品描述信息 非必填
+    "show_url":"",//商品的展示地址 非必填
+}]
+微信
+
+{
+    "cost_price":608800, //订单原价 非必填 int 单位分
+    "receipt_id":"wx123",//商品小票ID 非必填 String
+    //注意goods_detail字段的格式为"goods_detail":[{}],较多商户写成"goods_detail":{}
+    "goods_detail":
+    [{
+        "goods_id":"12345",//商品编码  必填 String
+        "wxpay_goods_id":"1001",//微信侧商品编码 非必填 String
+        "goods_name":"",//商品名称  非必填 String
+        "quantity":1,  //商品数量 必填 int
+        "price":528800 //商品单价 必填 int
+    },
+    {
+        "goods_id":"23456",
+        "wxpay_goods_id":"1002",
+        "goods_name":"iPhone6s 32G",
+        "quantity":1,
+        "price":608800
+    }]
+}
+银联二维码 只支持条码支付
+
+{
+    "orderInfo":  //订单信息
+    {
+        "title" :"日用品",  //订单标题。必填
+        "dctAmount" :"10000",//可优惠金额 非必填
+        "addnInfo" :"屈臣氏(人民广场)店"  //附加信息 非必填
+    },
+    "goodsInfo": //商品信息
+    [{
+        "id": "1234567890",  //商品编号 必填
+        "name": "商品 1",//商品名称 必填
+        "price": "500",//商品单价 必填 单位分
+        "quantity": "1", //商品数目 必填
+        "category": "类目 1", //商品类目 非必填
+        "addnInfo": "商品图片 http://www.95516.com/xxx.jpg" //附加信息 非必填
+    },
+    {
+        "id": "1234567891",
+        "name": "商品 2",
+        "price": "1000",
+        "quantity": "2"
+    }]
+}
+reserved_promotion_detail说明字段示例
+[{
+    "activity_id":"12345", //活动id
+    "amount":1, //优惠券面额 单位分
+    "merchant_contribute":1,//商户出资 单位分
+    "name":"BSagiiBBXm", //优惠名称
+    "other_contribute":0, //其他出资 单位分
+    "promotion_id":"10000", //券ID
+    "scope":"GLOBAL", //优惠范围 GLOBAL-全场代金券；SINGLE-单品优惠
+    "type":"DISCOUNT", //优惠类型 COUPON-代金券，需要走结算资金的充值型代金券；DISCOUNT-优惠券，不走结算资金的免充值型优惠券
+    "wxpay_contribute":0,//微信出资 单位分
+    "goods_detail":[
+                {
+                    "goods_remark":"商品备注信息",  //商品备注
+                    "quantity":1, //商品数量
+                    "discount_amount":1, //商品优惠金额
+                    "goods_id":"M1006", //商品id
+                    "price":100 //商品单价
+                },
+                {
+                    "goods_remark":"商品备注信息",
+                    "quantity":1,
+                    "discount_amount":1,
+                    "goods_id":"M1006",
+                    "price":100
+                }
+            ]
+}]
+reserved_scene_info场景信息说明字段示例
+序号	参数名	出现要求	型态	长度	说明
+01	id	必填	String	32	门店id
+02	name	非必填	String	64	门店名称
+03	area_code	非必填	String	6	门店行政区划码
+04	address	非必填	String	128	门店详细地址
+{
+"store_info" : {
+    "id": "SZTX001",
+    "name": "腾大餐厅",
+    "area_code": "440305",
+    "address": "科技园中一路腾讯大厦" }
+}
+© 2008-2019 上海富友支付服务股份有限公司 版权所有 ICP证：沪B2-20130103注：以下报文中的mchnt_order_no, refund_order_no必须全局永远唯一(不区分商户、日期)。
 
 流水号规则：机构编码（富友侧提供，4位）+日期（yyyyMMdd，8位）+其他随机数（8-18位，只能包含字母和数字，区分大小写，保证不重复）。如果流水号重复，会直接拒绝交易！！！
 
@@ -9,6 +276,155 @@
 此时需要商户主动发起查询来确定最终的订单状态（对接3.4订单查询接口）
 
 注：sign及reserved开头字段除外的其他非必填字段也需要参与验签。我司会根据后期业务需求，新增reserved开头字段,请提前做好兼容(简而言之，我们会新增reserved开头字段的字段，这些字段都不参与验签)。
+富友支付-259 文件改造方案-API
+1.改造内容
+1.1 流程
+终端信息采集流程图
+
+1.2 具体新增
+1.商户入网流程不变
+2.新增(4) 终端信息采集接口，合作方需按259号文规范上送必要信息至富友侧，富友侧同步报送到银联。
+3.新增(7) 返回 富友终端号
+4.修改(8)交易接口，新增终端信息，合作方可选择填入富友终端号或终端序列号(符合259号文的终端)
+5.新增(9)终端校验，初期只做校验通过率的统计，不拒交易，何时启用强校验另行通知。
+2.入网API改造内容
+2.1 商户终端信息采集报备接口
+详见扫码入网接口4.12 商户终端信息采集报备接口（259号文终端报备）
+
+2.2 交易接口
+测试环境已上线，调用 3.1 条码支付必须传入终端信息且会做终端信息的强制校验。
+
+生产环境计划于2022-03-02 日晚完成上线。上线后，富友侧暂时不进行终端信息的强制校验，暂不影响新增、存量交易。后续强制校验时间待富友侧通知，请合作方尽快完成改造。
+
+详情请关注富友在线文档：
+https://fundwx.fuiou.com/doc/#/scanpay/ 和 http://fundwx.fuiou.com/doc/#/scanprepay/
+
+3.1 条码支付，商户扫用户二维码收款 本接口中，实体pos终端上送交易（微信、支付宝、银联二维码），reserved_terminal_info字段必填
+3.2 主扫统一下单本接口中，实体pos终端上送交易（银联二维码），reserved_terminal_info字段必填
+3.3 公众号/服务窗统一下单
+以上三个接口中，新增以下字段说明：
+
+序号	参数名	必填	型态	长度	说明
+01	reserved_terminal_info(新增)	非必填	json		终端信息说明字段，见文档中reserved_terminal_info终端信息说明字段（259号文，终端信息）
+3.1条码支付，商户扫码用户二维码收款 接口，实体pos终端上送交易（微信、支付宝、银联二维码），本字段必填
+3.2 主扫统一下单 接口，实体pos终端上送交易（银联二维码），本字段必填
+02	reserved_fy_term_id(已有)	非必填	String	8	富友终端号(富友终端号reserved_fy_term_id与reserved_terminal_info.serial_num号二选一),富友采购或自带机入网填此字段 eg:70000319
+03	term_ip(已有)	必填	String	15	实时交易终端IP(后期富友、银联侧风控主要依据，请真实填写)
+暂时仅支持IPV4，IPV6 大概3月中旬支持
+2.3 终端相关
+应 259 号文改造要求：
+3 月 1 日起未满足 259 号文要求的条码终端设备（未在银联进 行终端产品安全认证检测）将无法在银联注册，服务商应在 3 月 1 日前将该类条码终端设 备通过终端信息采集接口进行上传，与商户绑定，银联将该类终端视为存量终端，3 月 1 日后不对存量终端做终端序列号强校验,请各位服务商提前准备好此部分商户终端资料，在 2 月 18 日至 3 月 1 日对接接口做该部分商户的终端信息绑定上送。
+
+注：3 月 1 日后增量终端设备银联将强校验终端序列号,如终端发生交易将被纳入银联检验 监控报表。
+
+
+
+
+
+reserved_terminal_info终端信息说明字段
+（259号文，终端信息）
+3.1条码支付，商户扫码用户二维码收款 接口，实体pos终端上送交易（微信、支付宝、银联二维码）本字段为必填
+3.2 主扫统一下单 接口，实体pos终端上送交易（银联二维码），本字段为必填
+
+序号	参数名	出现要求	型态	长度	说明
+01	reserved_terminal_info	非必填	json		终端信息说明字段
+02	└ location	非必填	String	32	受理终端实时交易所在地经纬度信息
+格式为纬度/经度，+表示北纬、东经，-表示南纬、西经
+
+注：请各合作方、商户尽量填写。银联二维码交易必填
+
+经纬度对地图不做要求
+03	└ serial_num	非必填	String	50	TUSN号(富友终端号reserved_fy_term_id与reserved_terminal_info.serial_num号二选一)，请填写终端采集请求接口中的TUSN号 eg:0002900F04686310000000001
+
+以下示例仅测试环境可用：{"serial_num":"12345678901SN012"}
+
+银联二维码、微信、支付宝交易必填
+04	└ encrypt_rand_num	非必填	String	10	加密随机因子：仅在被扫支付类交易报文中出现：
+若付款码为 19 位数字，则取后6 位；
+若付款码为 EMV 二维码，则取其tag 57 的卡号/token 号的后 6 位
+
+银联二维码、微信、支付宝交易必填
+05	└ secret_text	非必填	String	16	密文数据：仅在被扫支付类交易报文中出现：
+64bit 的密文数据，对终端硬件序列号和加密随机因子加密后的结果。
+本子域取值为：64bit 密文数据进行base64 编码后的结果
+
+**密文数据或密文算法请联系厂商提供**
+银联二维码、微信、支付宝交易必填
+06	└ app_version	非必填	String	8	终端应用程序的版本号。应用程序变更应保证版本号不重复。当长度不足时，右补空格
+报文示例
+
+{
+    "location":"+37.12/-121.213",
+    "serial_num":"",
+    "encrypt_rand_num":"",
+    "secret_text":"",
+    "app_version":""
+}
+3、常见问题
+259号文改造说明
+
+合作方平台也可操作终端报备（8.fuioupay.com 平台菜单：终端管理--聚合终端报备）
+
+富友终端型号详见附件（259）聚合终端类型V0.2-20220210版
+
+3.1 报备相关
+Q1：哪些终端需要合作方自己调用4.12 商户终端信息采集报备接口（259号文终端报备）？
+
+A1：不是在富友购买，或者没有在富友做过自带机入网的终端。
+
+
+Q2：做过终端报备的终端需要修改绑定商户流程是怎样的？
+
+A2：终端绑定过商户后，需要修改终端绑定的商户，需要先做操作状态的注销，然后做操作状态的修改，修改为新的商户号绑定即可。
+
+
+Q3：POS终端类型不在富友提供的终端类型怎么办呢？
+
+A3：需提供POS银联认证相关材料,邮件发送到op_fw@fuioupay.com ；如果终端只对接了扫码功能，pos也可作为辅助终端进行报备。
+
+
+Q4：终端报备时返回“ 商户无通道路由，暂不符合报备条件 ”怎么处理？
+
+A4：当接口返回该描述的时候，合作方可对该商户做一个标记当报备成功处理。
+
+
+Q5：终端报备的时候TUSN传什么？
+
+A5： 填写厂家提供的TUSN号，格式为：[8位(8位为：6位厂商编号+2位终端类型)+SN]，总长度大于等于16位，eg:00000104188SCA8U1514 注意：TUSN号一定要填写准确！
+
+如果厂家没有TUSN或者没有实体终端，本字段则填写： [mchnt_cd + SN号]或者[mchnt_cd + 合作方的虚拟终端号] eg:0002900F04686310000000001
+
+
+Q6：终端报备返回“ 路由未找到，请核实商户是否进件成功 ”怎么处理？
+
+A6：这个返回是因为商户进件后，立即调用了终端报备接口，商户进件成功之后，间隔30分钟后做终端报备操作即可。
+
+
+Q7：报备接口需要使用到秘钥，这个秘钥怎么申请呢？
+
+A7：终端报备接口使用的秘钥为商户进件秘钥，如果合作方之前没有对结果进件接口，需要邮件申请秘钥。
+
+邮件内容：机构号、机构名称、 因259改造对接终端报备接口，需要申请进件秘钥
+
+邮箱地址：techsupport@fuioupay.com
+
+3.2 交易相关
+Q1：哪些交易接口需要进行改造？
+
+A1：普通扫码文档（http://fundwx.fuiou.com/doc/#/scanpay/）
+扫码预授权文档（http://fundwx.fuiou.com/doc/#/scanprepay/）
+3.1 条码支付，商户扫用户二维码收款、3.2 主扫统一下单、3.3 公众号/服务窗统一下单 这三类接口需要进行改造；其中3.1条码支付，商户扫码用户二维码收款 接口，实体pos终端上送交易（微信、支付宝、银联二维码）reserved_terminal_info字段和对应的子字段为必填
+
+
+Q2：交易接口中，哪类商户终端信息上传reserved_fy_term_id字段？
+
+A2：如果终端在富友购买或者在富友侧做过自带机入网，终端信息上传reserved_fy_term_id字段、term_ip（必填）和 reserved_terminal_info 字段中 location（经纬度，选填）
+
+
+Q3：交易接口中，哪类商户终端信息上传reserved_terminal_info字段中 serial_num字段？
+
+A3：终端不是富友购买并且没有在富友侧做过自带机入网，合作方自己调用“4.24商户终端信息采集报备接口”的商户所使用的终端，交易接口终端信息上传reserved_terminal_info字段中 serial_num字段、term_ip（必填）和 reserved_terminal_info 字段中 location（经纬度，选填）
+
 
 请求地址：
 测试地址： https://fundwx.fuiou.com/micropay
@@ -2083,3 +2499,79 @@ XXD+ev78/3ETR4Q222ra575u43aHiEKiyHNaNb7iGyphGr7t9Av70EbU7B3MEzO3eB96HWrez
 签名原文： channel_order_no=4200000742202012028596001565&fee_amt=0&ins_cd=08K0023029&kb ps_trace_no=120497549430&mchnt_cd=0004510F3217505&mchnt_order_no=E202012021 71223382229376/TX003542&orig_mchnt_order_no=&txn_amt=1&txn_fin_ts=202012021738 28 交易手续费推送响应报文： 对请求body中的数据进行URLDecode既可获得请求参数xml报文
 
 © 2008-2019 上海富友支付服务股份有限公司 版权所有 ICP证：沪B2-20130103
+应答码
+系统类
+应答码	描述信息	解决方案
+000000	成功	
+010001	超时	
+010002	系统异常	
+010003	当前服务不可用	
+010005	系统维护中	
+010006	系统繁忙	
+010007	渠道不可用	
+010008	机构受理异常	
+报文类
+应答码	描述信息	解决方案
+020001	报文错误	格式不正确、必填字段非空等等
+交易类（6位应答码）
+应答码	描述信息	解决方案
+030001	其他错误	
+030002	授权码不正确	授权码不合法、授权码已过期、授权码校验错误等
+030003	订单已重复	
+030004	订单已支付	
+030005	商户不存在	商户未在渠道开通商户
+030006	订单已撤销	
+030007	订单已关闭	
+030008	订单不存在	
+030009	商户无权限	
+030010	用户支付中	
+030011	订单已退款	
+030012	退款订单不存在	
+030013	头寸不足	商户正交易不足以支持撤销
+030014	退款金额超过原订单总金额	
+030015	余额不足	
+030016	原订单不存在	退货才有
+030017	订单不可退款	
+030018	商户已入驻	
+030020	商户经营类目不存在	
+交易类（4位应答码）
+应答码	描述信息	解决方案
+1001	非空字段出现空值	检查报文
+1002	验签错误	提交方式、编码
+1003	字段内容错误	检查报文
+1009	商户号不存在/XX交易未开通	
+1010	找不到交易	找不到/交易状态异常
+1011	金额超限不允许退款	
+1012	余额不足不允许退款/银联主扫不允许退款	
+1013	商户订单号重复	
+1014	报文格式错	
+1015	请求功能尚不支持	
+2001	目标方超时	
+2002	目标方连接失败	
+9999	系统错误	
+条码支付应答码/退款应答码
+应答码	描述信息	解决方案
+000000	成功	
+030010	正常支付中	支付结果未知，需发查询
+010002	系统异常	支付结果未知，需发查询
+9999	系统异常	支付结果未知，需发查询
+010001	网络异常	支付结果未知，需发查询
+2001	网络异常	支付结果未知，需发查询
+2002	网络异常	支付结果未知，需发查询
+其他	失败	
+下单类应答码
+应答码	描述信息	解决方案
+000000	下单成功	
+其他	失败	
+查询应答码
+应答码	描述信息	解决方案
+返回码	trans_stat	状态
+000000	SUCCESS	成功
+错误码(多个)	PAYERROR	失败
+000000	USERPAYING	支付中
+000000	NOTPAY	未支付
+9999		系统错误，需要继续查询
+000000	CLOSED	已关闭
+000000	REVOKED	已撤销
+000000	REFUND	已退款
+1010	空	找不到交易
